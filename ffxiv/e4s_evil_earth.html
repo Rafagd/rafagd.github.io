@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Sepulture (Savage) [e4s] - Evil Earth</title>
+        <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha256-4+XzXVhsDmqanXGHaHvgh1gMQKX40OUvDEBTu8JcmNs=" crossorigin="anonymous"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/5.1.3/pixi.min.js"></script>
+        <style type="text/css">
+            * { margin: 0; padding: 0 }
+            html, body { height: 100% }
+            
+            body > * {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+            }
+        </style>
+    </head>
+    <body>
+        <script type="text/javascript">
+            let app, graphics, player, field, stage;
+
+            let BORDER_COLOR    = 0x000000;
+            let IDLE_COLOR      = 0x964B00;
+            let BAD_COLOR       = 0x009999;
+            let SUPER_BAD_COLOR = 0x00FFFF;
+            let MARKER_COLOR    = 0xFFA500;
+            let SUCCESS_COLOR   = 0x00FF00;
+            let FAILURE_COLOR   = 0xFF0000;
+
+            let IDLE      = 0;
+            let MARKER    = 1;
+            let BAD       = 2;
+            let SUPER_BAD = 3;
+            let FAILURE   = 4;
+            let SUCCESS   = 5;
+
+            let mechanic = EvilEarth();
+
+            $(document).ready(setup);
+                
+            function square(half_w)
+            {
+                if (half_w == 0) {
+                    return [[0, 0]];
+                }
+
+                let blocks = [];
+                
+                for (let i = -half_w; i <= half_w; i++) {
+                    blocks.push([i, -half_w]); // Top
+                    blocks.push([i,  half_w]); // Bottom
+                }
+
+                for (let i = -half_w + 1; i < half_w; i++) {
+                    blocks.push([-half_w, i ]); // Left
+                    blocks.push([ half_w, i ]); // Right
+                }
+
+                return blocks;
+            }
+
+            function EvilEarth()
+            {
+                let _timer   = -1;
+                let _count   = 0;
+                let _step    = -1;
+
+                let _origins = [];
+                
+                function execute(pattern = -1, timer = 60)
+                {
+                    if (pattern < -1) {
+                        pattern = Math.floor(4 * Math.random());
+                    }
+
+                    switch (pattern) {
+                        case 0: _origins = [ field[ 0], field[15] ]; break;
+                        case 1: _origins = [ field[ 5], field[10] ]; break;
+                        case 2: _origins = [ field[ 6], field[ 9] ]; break;
+                        case 3: _origins = [ field[ 3], field[12] ]; break;
+                    }
+
+                    _timer = timer;
+                    _count = 0;
+                    _step  = 0;
+                    
+                    for (let i = 0; i < field.length; i++) {
+                        field[i].set_state(IDLE);
+                    }
+
+                    _origins[0].set_state(MARKER);
+                    _origins[1].set_state(MARKER);
+                }
+
+                function update(delta)
+                {
+                    if (_step < 0 || _step > 4) {
+                        return;
+                    }
+
+                    if (_count < _timer) {
+                        _count += delta;
+                        return;
+                    }
+
+                    for (let i = 0; i < field.length; i++) {
+                        field[i].set_state(IDLE);
+                    }
+
+                    let shape = square(_step);
+                    for (let i = 0; i < _origins.length; i++) {
+                        for (let j = 0; j < shape.length; j++) {
+                            let pos = _origins[i].position();
+
+                            let nx = pos[0] + shape[j][0];
+                            let ny = pos[1] + shape[j][1];
+
+                            if (nx < 0 || ny < 0 || nx >= 4 || ny >= 4) {
+                                continue;
+                            }
+
+                            let state = BAD;
+                            if (field[4 * ny + nx].state() == BAD) {
+                                state = SUPER_BAD;
+                            }
+
+                            field[4 * ny + nx].set_state(state);
+
+                            if (player.collides_with(field[4 * ny + nx])) {
+                                field[4 * ny + nx].set_state(FAILURE);
+                                _step   = 10;
+                                _reason = "Snapshotted.";
+                            }
+                        }
+                    }
+
+                    _step++;
+                    _count = 0;
+
+                    if (_step == 5) {
+                        for (let i = 0; i < field.length; i++) {
+                            if (player.collides_with(field[i])) {
+                                field[i].set_state(SUCCESS);
+                                break;
+                            }
+                        }
+                    } 
+                }
+
+                return {
+                    execute: execute,
+                    update:  update
+                };
+            }
+            
+            function Player()
+            {         
+                let _pos = { x: 256, y: 256 };
+
+                function draw(graphics)
+                {
+                    graphics.beginFill(0xFF0000);
+                    graphics.drawCircle(_pos.x, _pos.y, 10);
+                    graphics.endFill();
+                }
+
+                function collides_with(section)
+                {
+                    let sec_pos = section.position();
+
+                    let l = sec_pos[0] * 128;
+                    let r = sec_pos[0] * 128 + 128;
+                    let t = sec_pos[1] * 128;
+                    let b = sec_pos[1] * 128 + 128;
+
+                    return ((_pos.x >= l && _pos.x < r) &&
+                            (_pos.y >= t && _pos.y < b));
+                }
+
+                return {
+                    draw: draw,
+                    
+                    position:     ()  => _pos,
+                    set_position: pos => _pos = pos,
+
+                    collides_with: collides_with,
+                };
+            }
+
+            function Sector(x, y)
+            {              
+                let _state = IDLE;
+
+                function draw(graphics)
+                {
+                    let color;
+                        
+                    switch (_state) {
+                        default:
+                        case IDLE:      color = IDLE_COLOR;      break;
+                        case MARKER:    color = MARKER_COLOR;    break;
+                        case BAD:       color = BAD_COLOR;       break;
+                        case SUPER_BAD: color = SUPER_BAD_COLOR; break;
+
+                        case FAILURE:   color = FAILURE_COLOR;   break;
+                        case SUCCESS:   color = SUCCESS_COLOR;   break;
+                    }
+
+                    graphics.beginFill(color);
+                    graphics.drawRect(128 * x + 1, 128 * y + 1, 126, 126);
+                    graphics.endFill();
+                }
+
+                return {
+                    draw: draw,
+
+                    position:  function () { return [ x, y ]; },
+
+                    state:     function () { return _state; },
+                    set_state: function (state) { _state = state; },
+                };
+            }
+
+
+            function setup()
+            {
+                app = new PIXI.Application({ width: 512, height: 512 });
+                document.body.appendChild(app.view);
+
+                graphics = new PIXI.Graphics();
+                app.stage.addChild(graphics);
+
+                player = Player(app.stage);
+
+                field = []
+                for (let i = 0; i < 16; i++) {
+                    field.push(Sector(i % 4, i / 4 | 0))
+                }
+
+                app.ticker.add(function (delta)
+                {
+                    update(delta);
+                    draw(graphics);
+                });
+
+                app.stage.interactive = true;
+                app.stage.on("pointerdown", e => mechanic.execute((4 * Math.random())|0));
+                app.stage.on("pointermove", e => player.set_position(e.data.global));
+            }
+                     
+            function update(delta)
+            {                    
+                mechanic.update(delta);
+            }
+
+            function draw(graphics)
+            {
+                graphics.clear();
+                for (let i = 0; i < 16; i++) {
+                    field[i].draw(graphics);
+                    player.draw(graphics)
+                }
+            }
+
+        </script>
+    </body>
+</html>
